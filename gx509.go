@@ -70,5 +70,8 @@ func main() {
 
   fmt.Printf("\n")
   fmt.Printf("X509v3 Name Constraints (critical): %t\n", cert.PermittedDNSDomainsCritical)
-  fmt.Printf("X509v3 Name Constraints Permitted: %s\n", cert.PermittedDNSDomains)
+  fmt.Printf("X509v3 PermittedDNSDomains: %s\n", cert.PermittedDNSDomains)
+  fmt.Printf("X509v3 PermittedIPAddresses: %s\n", cert.PermittedIPAddresses)
+  fmt.Printf("X509v3 ExcludedDNSDomains: %s\n", cert.ExcludedDNSDomains)
+  fmt.Printf("X509v3 ExcludedIPAddresses: %s\n", cert.ExcludedIPAddresses)
 }

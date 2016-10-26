@@ -559,6 +559,9 @@ type Certificate struct {
 	// Name constraints
 	PermittedDNSDomainsCritical bool // if true then the name constraints are marked critical.
 	PermittedDNSDomains         []string
+	PermittedIPAddresses 				[]net.IP
+	ExcludedDNSDomains  				[]string
+	ExcludedIPAddresses 				[]net.IP
 
 	// CRL Distribution Points
 	CRLDistributionPoints []string
@@ -767,6 +770,7 @@ type nameConstraints struct {
 
 type generalSubtree struct {
 	Name string `asn1:"tag:2,optional,ia5"`
+	IPAddress []byte `asn1:"tag:2,optional"`
 }
 
 // RFC 5280, 4.2.2.1
@@ -1039,18 +1043,41 @@ func parseCertificate(in *certificate) (*Certificate, error) {
 					return nil, errors.New("x509: trailing data after X.509 NameConstraints")
 				}
 
-				if len(constraints.Excluded) > 0 && e.Critical {
-					return out, UnhandledCriticalExtension{}
+				for _, subtree := range constraints.Excluded {
+					if len(subtree.IPAddress) > 0 {
+						switch len(subtree.IPAddress) {
+						case net.IPv4len, net.IPv6len:
+							out.ExcludedIPAddresses = append(out.ExcludedIPAddresses, subtree.IPAddress)
+						default:
+							return out, errors.New("x509: certificate contained IP address of length " + strconv.Itoa(len(subtree.IPAddress)))
+						}
+					}
+
+					if len(subtree.Name) > 0 {
+						out.ExcludedDNSDomains = append(out.ExcludedDNSDomains, subtree.Name)
+					}
 				}
 
 				for _, subtree := range constraints.Permitted {
-					if len(subtree.Name) == 0 {
-						if e.Critical {
-							return out, UnhandledCriticalExtension{}
+					if len(subtree.IPAddress) > 0 {
+						switch len(subtree.IPAddress) {
+						case net.IPv4len, net.IPv6len:
+							out.PermittedIPAddresses = append(out.PermittedIPAddresses, subtree.IPAddress)
+						default:
+							return out, errors.New("x509: certificate contained IP address of length " + strconv.Itoa(len(subtree.IPAddress)))
 						}
-						continue
 					}
-					out.PermittedDNSDomains = append(out.PermittedDNSDomains, subtree.Name)
+
+					if len(subtree.Name) > 0 {
+						out.PermittedDNSDomains = append(out.PermittedDNSDomains, subtree.Name)
+					}
+				}
+
+				if len(out.ExcludedDNSDomains) == 0 && len(out.ExcludedIPAddresses) == 0 &&
+					 len(out.PermittedDNSDomains) == 0 && len(out.PermittedIPAddresses) == 0 {
+					if e.Critical {
+						return out, UnhandledCriticalExtension{}
+					}
 				}
 
 			case 31:
