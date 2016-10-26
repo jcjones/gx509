@@ -5,9 +5,9 @@
 package main
 
 import (
-  "bytes"
+  // "bytes"
   "crypto/x509"
-  "encoding/json"
+  // "encoding/json"
   "encoding/pem"
   "flag"
   "fmt"
@@ -58,15 +58,15 @@ func main() {
 
   // log.Printf("%+v", cert)
 
-  certJson, err := json.Marshal(cert)
-  if err != nil {
-    log.Fatalf("Could not convert certificate to JSON: %v", err)
-    return
-  }
+  // certJson, err := json.Marshal(cert)
+  // if err != nil {
+  //   log.Fatalf("Could not convert certificate to JSON: %v", err)
+  //   return
+  // }
 
-  var out bytes.Buffer
-  json.Indent(&out, certJson, "", "  ")
-  out.WriteTo(os.Stdout)
+  // var out bytes.Buffer
+  // json.Indent(&out, certJson, "", "  ")
+  // out.WriteTo(os.Stdout)
 
   fmt.Printf("\n")
   fmt.Printf("X509v3 Name Constraints (critical): %t\n", cert.PermittedDNSDomainsCritical)

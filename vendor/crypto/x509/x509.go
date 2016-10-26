@@ -25,6 +25,8 @@ import (
 	"net"
 	"strconv"
 	"time"
+
+	"log"
 )
 
 // pkixPublicKey reflects a PKIX public key structure. See SubjectPublicKeyInfo
@@ -559,9 +561,9 @@ type Certificate struct {
 	// Name constraints
 	PermittedDNSDomainsCritical bool // if true then the name constraints are marked critical.
 	PermittedDNSDomains         []string
-	PermittedIPAddresses 				[]net.IP
+	PermittedIPAddresses 				[]net.IPNet
 	ExcludedDNSDomains  				[]string
-	ExcludedIPAddresses 				[]net.IP
+	ExcludedIPAddresses 				[]net.IPNet
 
 	// CRL Distribution Points
 	CRLDistributionPoints []string
@@ -770,7 +772,7 @@ type nameConstraints struct {
 
 type generalSubtree struct {
 	Name string `asn1:"tag:2,optional,ia5"`
-	IPAddress []byte `asn1:"tag:2,optional"`
+	IPAddress []byte `asn1:"tag:7,optional"`
 }
 
 // RFC 5280, 4.2.2.1
@@ -931,6 +933,19 @@ func parseSANExtension(value []byte) (dnsNames, emailAddresses []string, ipAddre
 	return
 }
 
+func parseCIDR(address []byte) (*net.IPNet, error) {
+	switch len(address) {
+	case net.IPv4len*2:
+		cidr := &net.IPNet{IP: address[net.IPv4len:], Mask: address[:net.IPv4len] }
+		return cidr, nil
+	case net.IPv6len*2:
+		cidr := &net.IPNet{IP: address[net.IPv6len:], Mask: address[:net.IPv6len] }
+		return cidr, nil
+	default:
+		return nil, errors.New("x509: certificate contained IP Address + Net of length " + strconv.Itoa(len(address)))
+	}
+}
+
 func parseCertificate(in *certificate) (*Certificate, error) {
 	out := new(Certificate)
 	out.Raw = in.Raw
@@ -1044,13 +1059,14 @@ func parseCertificate(in *certificate) (*Certificate, error) {
 				}
 
 				for _, subtree := range constraints.Excluded {
+
+					log.Printf("Excluded: %+v", subtree)
 					if len(subtree.IPAddress) > 0 {
-						switch len(subtree.IPAddress) {
-						case net.IPv4len, net.IPv6len:
-							out.ExcludedIPAddresses = append(out.ExcludedIPAddresses, subtree.IPAddress)
-						default:
-							return out, errors.New("x509: certificate contained IP address of length " + strconv.Itoa(len(subtree.IPAddress)))
+						cidr, err := parseCIDR(subtree.IPAddress)
+						if err != nil {
+							return nil, err
 						}
+						out.PermittedIPAddresses = append(out.PermittedIPAddresses, *cidr)
 					}
 
 					if len(subtree.Name) > 0 {
@@ -1060,12 +1076,11 @@ func parseCertificate(in *certificate) (*Certificate, error) {
 
 				for _, subtree := range constraints.Permitted {
 					if len(subtree.IPAddress) > 0 {
-						switch len(subtree.IPAddress) {
-						case net.IPv4len, net.IPv6len:
-							out.PermittedIPAddresses = append(out.PermittedIPAddresses, subtree.IPAddress)
-						default:
-							return out, errors.New("x509: certificate contained IP address of length " + strconv.Itoa(len(subtree.IPAddress)))
+						cidr, err := parseCIDR(subtree.IPAddress)
+						if err != nil {
+							return nil, err
 						}
+						out.PermittedIPAddresses = append(out.PermittedIPAddresses, *cidr)
 					}
 
 					if len(subtree.Name) > 0 {
@@ -1075,9 +1090,8 @@ func parseCertificate(in *certificate) (*Certificate, error) {
 
 				if len(out.ExcludedDNSDomains) == 0 && len(out.ExcludedIPAddresses) == 0 &&
 					 len(out.PermittedDNSDomains) == 0 && len(out.PermittedIPAddresses) == 0 {
-					if e.Critical {
-						return out, UnhandledCriticalExtension{}
-					}
+					// If we didn't parse anything then we do the critical check, below.
+					unhandled = true
 				}
 
 			case 31:
