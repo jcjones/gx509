@@ -12,6 +12,8 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+
+	"github.com/jcjones/gx509/gx509"
 )
 
 var printHeaders = flag.Bool("headers", false, "Add PEM-headers to each block (not compatible with OpenSSL)")
@@ -61,7 +63,7 @@ func main() {
 	fmt.Printf("X509v3 ExcludedDNSDomains: %s\n", cert.ExcludedDNSDomains)
 	fmt.Printf("X509v3 ExcludedIPAddresses: %s\n", cert.ExcludedIPAddresses)
 
-	result, details := DetermineIfTechnicallyConstrained(cert)
+	result, details := gx509.DetermineIfTechnicallyConstrained(cert)
 
 	log.Printf("%s result: %v details: %s", flag.Arg(0), result, details)
 }
