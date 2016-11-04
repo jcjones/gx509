@@ -12,9 +12,12 @@ import (
 )
 
 // True if all bytes in the slice are zero.
-func isAllZeros(buf []byte) bool {
-	for _, b := range buf {
-		if b != 0 {
+func isAllZeros(buf []byte, length int) bool {
+	if length > len(buf) {
+		return false
+	}
+	for i:=0; i<length; i++ {
+		if buf[i] != 0 {
 			return false
 		}
 	}
@@ -25,19 +28,16 @@ func isAllZeros(buf []byte) bool {
 // extension that does not contain anyExtendedKeyUsage and either does not
 // contain the serverAuth extended key usage or has the nameConstraints
 // extension with both dNSName and iPAddress entries.
-// For certificates with a notBefore before 23 August 2016, the
-// id-Netscape-stepUp OID (aka Netscape Server Gated Crypto ("nsSGC")) is
-// treated as equivalent to id-kp-serverAuth.
 func DetermineIfTechnicallyConstrained(cert *x509.Certificate) (bool, string) {
 	// There must be Extended Key Usage flags
 	if len(cert.ExtKeyUsage) == 0 {
 		return false, "ExtKeyUsage is required"
 	}
 
-	nsSGCCutoff, err := time.Parse(time.RFC3339, "2016-08-23T00:00:00Z")
-	if err != nil {
-		return false, err.Error()
-	}
+	// For certificates with a notBefore before 23 August 2016, the
+	// id-Netscape-stepUp OID (aka Netscape Server Gated Crypto ("nsSGC")) is
+	// treated as equivalent to id-kp-serverAuth.
+	nsSGCCutoff := time.Date(2016, time.August, 23, 0, 0, 0, 0, time.UTC)
 
 	stepUpEquivalentToServerAuth := cert.NotBefore.Before(nsSGCCutoff)
 	var hasServerAuth bool
@@ -57,7 +57,9 @@ func DetermineIfTechnicallyConstrained(cert *x509.Certificate) (bool, string) {
 
 	// Must be marked for Server Auth, or have StepUp and be from before the cutoff
 	if !(hasServerAuth || (stepUpEquivalentToServerAuth && hasStepUp)) {
-		return true, "Is not constrained: not for Server Auth"
+		return true, fmt.Sprintf(
+			"Is constrained: hasServerAuth=%v || (beforeStepUpCutoff=%v && hasStepUp=%v)",
+			hasServerAuth, stepUpEquivalentToServerAuth, hasStepUp)
 	}
 
 	// For iPAddresses in excludedSubtrees, both IPv4 and IPv6 must be present
@@ -66,10 +68,10 @@ func DetermineIfTechnicallyConstrained(cert *x509.Certificate) (bool, string) {
 	var excludesIPv4 bool
 	var excludesIPv6 bool
 	for _, cidr := range cert.ExcludedIPAddresses {
-		if cidr.IP.Equal(net.IPv4zero) && isAllZeros(cidr.Mask) {
+		if cidr.IP.Equal(net.IPv4zero) && isAllZeros(cidr.Mask, net.IPv4len) {
 			excludesIPv4 = true
 		}
-		if cidr.IP.Equal(net.IPv6zero) && isAllZeros(cidr.Mask) {
+		if cidr.IP.Equal(net.IPv6zero) && isAllZeros(cidr.Mask, net.IPv6len) {
 			excludesIPv6 = true
 		}
 	}
@@ -78,11 +80,17 @@ func DetermineIfTechnicallyConstrained(cert *x509.Certificate) (bool, string) {
 	hasIPAddressesInExcludedSubtrees := excludesIPv4 && excludesIPv6
 
 	// There must be at least one DNSname constraint
-	hasDNSName := len(cert.PermittedDNSDomains) > 0 || len(cert.ExcludedDNSDomains) > 0
+	hasDNSName := len(cert.PermittedDNSDomains) > 0 ||
+		len(cert.ExcludedDNSDomains) > 0
 
-	if hasDNSName && (hasIPAddressInPermittedSubtrees || hasIPAddressesInExcludedSubtrees) {
-		return true, "Is constrained"
+	constraintsText := fmt.Sprintf(
+		"hasDNSName=%v && (hasIPAddressInPermittedSubtrees=%v || hasIPAddressesInExcludedSubtrees=%v)",
+		hasDNSName, hasIPAddressInPermittedSubtrees, hasIPAddressesInExcludedSubtrees)
+
+	if hasDNSName && (hasIPAddressInPermittedSubtrees ||
+		hasIPAddressesInExcludedSubtrees) {
+		return true, fmt.Sprintf("Is constrained: %s", constraintsText)
 	}
 
-	return false, fmt.Sprintf("Is not constrained: hasDNSName=%v && (hasIPAddressInPermittedSubtrees=%v || hasIPAddressesInExcludedSubtrees=%v)", hasDNSName, hasIPAddressInPermittedSubtrees, hasIPAddressesInExcludedSubtrees)
+	return false, fmt.Sprintf("Is not constrained: %s)", constraintsText)
 }

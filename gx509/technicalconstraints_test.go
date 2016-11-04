@@ -11,20 +11,21 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 )
 
-var pemPublicKey = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3VoPN9PKUjKFLMwOge6+
-wnDi8sbETGIx2FKXGgqtAKpzmem53kRGEQg8WeqRmp12wgp74TGpkEXsGae7RS1k
-enJCnma4fii+noGH7R0qKgHvPrI2Bwa9hzsH8tHxpyM3qrXslOmD45EH9SxIDUBJ
-FehNdaPbLP1gFyahKMsdfxFJLUvbUycuZSJ2ZnIgeVxwm4qbSvZInL9Iu4FzuPtg
-fINKcbbovy1qq4KvPIrXzhbY3PWDc6btxCf3SE0JdE1MCPThntB62/bLMSQ7xdDR
-FF53oIpvxe/SCOymfWq/LW849Ytv3Xwod0+wzAP8STXG4HSELS4UedPYeHJJJYcZ
-+QIDAQAB
------END PUBLIC KEY-----
-`
+// var pemPublicKey = `-----BEGIN PUBLIC KEY-----
+// MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3VoPN9PKUjKFLMwOge6+
+// wnDi8sbETGIx2FKXGgqtAKpzmem53kRGEQg8WeqRmp12wgp74TGpkEXsGae7RS1k
+// enJCnma4fii+noGH7R0qKgHvPrI2Bwa9hzsH8tHxpyM3qrXslOmD45EH9SxIDUBJ
+// FehNdaPbLP1gFyahKMsdfxFJLUvbUycuZSJ2ZnIgeVxwm4qbSvZInL9Iu4FzuPtg
+// fINKcbbovy1qq4KvPIrXzhbY3PWDc6btxCf3SE0JdE1MCPThntB62/bLMSQ7xdDR
+// FF53oIpvxe/SCOymfWq/LW849Ytv3Xwod0+wzAP8STXG4HSELS4UedPYeHJJJYcZ
+// +QIDAQAB
+// -----END PUBLIC KEY-----
+// `
 
 var pemPrivateKey = `-----BEGIN RSA PRIVATE KEY-----
 MIIBOgIBAAJBALKZD0nEffqM1ACuak0bijtqE2QrI/KLADv7l3kK3ppMyCuLKoF0
@@ -66,19 +67,238 @@ func serialiseAndParse(t *testing.T, template *x509.Certificate) *x509.Certifica
 	return cert
 }
 
+func checkConstrained(t *testing.T, expected bool, cert *x509.Certificate) {
+	result, details := DetermineIfTechnicallyConstrained(cert)
+	if expected != result {
+		t.Errorf("Expected %v, got %v. Details: %s", expected, result, details)
+	}
+}
+
 func TestNoConstraints(t *testing.T) {
+	t.Parallel()
+
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
 			CommonName: "Σ Acme Co",
 		},
-		NotBefore: time.Unix(1000, 0),
-		NotAfter:  time.Unix(100000, 0),
+		NotBefore: time.Date(2009, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
 
 		BasicConstraintsValid: true,
 		IsCA: true,
 	}
 
-	cert1 := serialiseAndParse(t, template)
-	t.Fatalf("Seril: %+v", cert1)
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
+}
+
+func TestExtAnyKeyUsage(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2009, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageAny, x509.ExtKeyUsageNetscapeServerGatedCrypto},
+		ExcludedIPAddresses: []net.IPNet{
+			{IP: net.IPv4zero, Mask: net.IPMask(net.IPv4zero)},
+			{IP: net.IPv6zero, Mask: net.IPMask(net.IPv6zero)}},
+		PermittedDNSDomains: []string{".example.com", "example.com"},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
+}
+
+func Test2014StepUpConstrainedCert(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2014, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageNetscapeServerGatedCrypto},
+		ExcludedIPAddresses: []net.IPNet{
+			{IP: net.IPv4zero, Mask: net.IPMask(net.IPv4zero)},
+			{IP: net.IPv6zero, Mask: net.IPMask(net.IPv6zero)}},
+		PermittedDNSDomains: []string{".example.com", "example.com"},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, true, cert)
+}
+
+func Test2014StepUpUnconstrainedCert(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2014, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageNetscapeServerGatedCrypto},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
+}
+
+func Test2017ConstrainedCertWithoutIPv6(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2017, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		ExcludedIPAddresses: []net.IPNet{
+			{IP: net.IPv4zero, Mask: net.IPMask(net.IPv4zero)}},
+		PermittedDNSDomains: []string{".example.com", "example.com"},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
+}
+
+func Test2017ConstrainedCertWithoutDNSnames(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2017, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		ExcludedIPAddresses: []net.IPNet{
+			{IP: net.IPv4zero, Mask: net.IPMask(net.IPv4zero)},
+			{IP: net.IPv6zero, Mask: net.IPMask(net.IPv6zero)}},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
+}
+
+func Test2017ConstrainedCertWithExcludedIPs(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2017, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		ExcludedIPAddresses: []net.IPNet{
+			{IP: net.IPv4zero, Mask: net.IPMask(net.IPv4zero)},
+			{IP: net.IPv6zero, Mask: net.IPMask(net.IPv6zero)}},
+		PermittedDNSDomains: []string{".example.com", "example.com"},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, true, cert)
+}
+
+func Test2017ConstrainedCertWithIncludedIPs(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2017, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		PermittedIPAddresses: []net.IPNet{
+			{IP: net.ParseIP("128.0.0.1"), Mask: net.IPMask(net.ParseIP("255.255.255.0"))},
+			{IP: net.ParseIP("::1"), Mask: net.IPMask(net.IPv6zero)}},
+		PermittedDNSDomains: []string{".example.com", "example.com"},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, true, cert)
+}
+
+func Test2017ConstrainedCertWithoutIPs(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2017, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: true,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		PermittedDNSDomains: []string{".example.com", "example.com"},
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
+}
+
+func TestNotACA(t *testing.T) {
+	t.Parallel()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Σ Acme Co",
+		},
+		NotBefore: time.Date(2009, time.December, 1, 23, 59, 59, 59, time.UTC),
+		NotAfter:  time.Date(2019, time.December, 1, 23, 59, 59, 59, time.UTC),
+
+		BasicConstraintsValid: true,
+		IsCA: false,
+	}
+
+	cert := serialiseAndParse(t, template)
+	checkConstrained(t, false, cert)
 }
